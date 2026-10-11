@@ -293,29 +293,78 @@ function viewPlanEdit() {
     <div class="pad"><button class="btn block" data-act="plan-add-ex">+ Dodaj ćwiczenie</button></div>`;
 }
 
+const isDone = (entry) => entry.sets.length > 0 && entry.sets.every((x) => x.done);
+
+// następne niezrobione ćwiczenie po ei (z zawinięciem), -1 gdy wszystkie zrobione
+function nextUndone(ei) {
+  const list = S.active.exercises;
+  for (let k = 1; k < list.length; k++) {
+    const i = (ei + k) % list.length;
+    if (!isDone(list[i])) return i;
+  }
+  return -1;
+}
+
+// trening w toku: kafelki ćwiczeń, zrobione na czerwono
 function viewActive() {
   const w = S.active;
+  const doneCount = w.exercises.filter(isDone).length;
   return `
     ${bar(`
       <input class="title-input" data-f="wname" value="${esc(w.name)}" enterkeyhint="done" aria-label="Nazwa treningu">
       <span class="elapsed" id="elapsed">${clock(Date.now() - w.start)}</span>
       <button class="btn primary sm" data-act="finish">Zakończ</button>`)}
-    ${w.exercises.length ? w.exercises.map(exBlock).join('') : `<p class="empty">Dodaj pierwsze ćwiczenie.</p>`}
+    <h2 class="section">Ćwiczenia · zrobione ${doneCount} z ${w.exercises.length}</h2>
+    <div class="tiles">
+      ${w.exercises.map((entry, i) => {
+        const ex = exById(entry.exId);
+        const n = entry.sets.filter((x) => x.done).length, total = entry.sets.length;
+        return `
+        <button class="tile${isDone(entry) ? ' done' : ''}" data-act="ex-tile" data-ei="${i}">
+          <div class="tile-img">${ex.img ? `<img src="img/${ex.img}.jpg" alt="" loading="lazy">` : esc(ex.name.charAt(0).toUpperCase())}</div>
+          <div class="tile-body">
+            <div class="t">${esc(ex.name)}</div>
+            <div class="s">${isDone(entry) ? 'Zrobione ✓' : `${n} z ${total} serii`}</div>
+          </div>
+          ${n && !isDone(entry) ? `<div class="tile-prog" style="width:${Math.round((100 * n) / total)}%"></div>` : ''}
+        </button>`;
+      }).join('')}
+      <button class="tile add" data-act="add-ex"><span class="add-btn"></span>Dodaj ćwiczenie</button>
+    </div>
+    <div class="pad"><button class="btn ghost danger block" data-act="cancel">Anuluj trening</button></div>`;
+}
+
+// jedno ćwiczenie z treningu w toku: serie do odhaczania
+function viewActiveEx({ ei }) {
+  const w = S.active, entry = w?.exercises[ei];
+  if (!entry) { ui.view = null; return w ? viewActive() : viewPlans(); }
+  const ex = exById(entry.exId);
+  const next = nextUndone(ei);
+  return `
+    ${bar(`<button class="back" data-act="tiles" aria-label="Wszystkie ćwiczenia">‹</button>
+      <h1>${esc(ex.name)}</h1>
+      <span class="elapsed" id="elapsed">${clock(Date.now() - w.start)}</span>
+      <button class="icon" data-act="ex-menu" data-ei="${ei}" aria-label="Opcje">⋮</button>`)}
+    ${exBlock(entry, ei, true)}
     <div class="pad stack">
-      <button class="btn block" data-act="add-ex">+ Dodaj ćwiczenie</button>
-      <button class="btn ghost danger block" data-act="cancel">Anuluj trening</button>
+      ${next >= 0
+        ? `<button class="btn primary block" data-act="ex-tile" data-ei="${next}">Następne: ${esc(exName(w.exercises[next].exId))} ›</button>`
+        : ''}
+      <button class="btn block" data-act="tiles">Wszystkie ćwiczenia</button>
+      <button class="btn ghost block" data-act="ex-open" data-id="${entry.exId}">Technika i historia ćwiczenia</button>
     </div>`;
 }
 
-function exBlock(entry, i) {
+// solo: ekran pojedynczego ćwiczenia — nazwa i menu są w górnym pasku
+function exBlock(entry, i, solo = false) {
   const ex = exById(entry.exId);
   const prev = prevSets(entry.exId);
   return `
-    <section class="ex">
-      <div class="ex-head">
+    <section class="ex${solo ? ' solo' : ''}">
+      ${solo ? '' : `<div class="ex-head">
         <button class="ex-name" data-act="ex-open" data-id="${entry.exId}">${esc(ex.name)}</button>
         <button class="icon" data-act="ex-menu" data-ei="${i}" aria-label="Opcje">⋮</button>
-      </div>
+      </div>`}
       <div class="ex-note">${entry.target ? `Cel: ${entry.sets.length} × ${entry.target} · ` : ''}Przerwa ${ex.rest ? clock(ex.rest * 1000) : 'wyłączona'}</div>
       <div class="grid head"><span>Seria</span><span>Poprzednio</span><span>kg</span><span>Powt.</span><span></span></div>
       ${entry.sets.map((s, j) => {
@@ -501,7 +550,7 @@ function viewWorkout(v) {
     </div>`;
 }
 
-const VIEWS = { exercise: viewExercise, workout: viewWorkout, summary: viewWorkout, plan: viewPlan, 'plan-edit': viewPlanEdit };
+const VIEWS = { exercise: viewExercise, workout: viewWorkout, summary: viewWorkout, plan: viewPlan, 'plan-edit': viewPlanEdit, 'active-ex': viewActiveEx };
 function render() {
   let html;
   if (ui.view) html = VIEWS[ui.view.type](ui.view);
@@ -515,7 +564,7 @@ function render() {
 
 function renderBars() {
   const rest = $('#rest'), live = $('#live');
-  const onActive = ui.tab === 'workout' && !ui.view && S.active;
+  const onActive = ui.tab === 'workout' && S.active && (!ui.view || ui.view.type === 'active-ex');
   rest.hidden = !S.rest;
   live.hidden = !(S.active && !S.rest && !onActive);
   if (S.rest) {
@@ -735,7 +784,7 @@ const actions = {
     scrollTo(0, 0);
   },
   back() {
-    ui.view = null;
+    ui.view = ui.view?.ret ?? null;
     render();
     scrollTo(0, 0);
   },
@@ -894,9 +943,9 @@ const actions = {
     save();
     closeSheet();
     render();
-    const blocks = document.querySelectorAll('.ex');
-    blocks[blocks.length - 1]?.scrollIntoView({ block: 'center' });
   },
+  'ex-tile'(el) { ui.view = { type: 'active-ex', ei: +el.dataset.ei }; render(); scrollTo(0, 0); },
+  tiles() { ui.view = null; render(); scrollTo(0, 0); },
   'ex-menu'(el) { exMenuSheet(+el.dataset.ei); },
   'rest-set'(el) {
     const ei = +el.dataset.ei;
@@ -912,10 +961,12 @@ const actions = {
   'ex-move'(el) {
     const i = +el.dataset.ei, j = i + +el.dataset.d, list = S.active.exercises;
     [list[i], list[j]] = [list[j], list[i]];
+    if (ui.view?.type === 'active-ex') ui.view.ei = j;
     save(); closeSheet(); render();
   },
   'ex-remove'(el) {
     S.active.exercises.splice(+el.dataset.ei, 1);
+    if (ui.view?.type === 'active-ex') ui.view = null;
     save(); closeSheet(); render();
   },
 
@@ -936,7 +987,7 @@ const actions = {
     });
   },
 
-  'ex-open'(el) { closeSheet(); ui.view = { type: 'exercise', id: el.dataset.id }; render(); scrollTo(0, 0); },
+  'ex-open'(el) { closeSheet(); ui.view = { type: 'exercise', id: el.dataset.id, ret: ui.view }; render(); scrollTo(0, 0); },
   'ex-delete'(el) {
     confirmSheet('Usunąć ćwiczenie?', 'Zniknie z listy ćwiczeń.', 'Usuń', () => {
       S.exercises = S.exercises.filter((e) => e.id !== el.dataset.id);
