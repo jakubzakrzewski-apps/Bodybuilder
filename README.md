@@ -1,4 +1,4 @@
-# Trening
+# Bodybuilder
 
 Prosta aplikacja (PWA) do zapisywania treningów siłowych. Czysty HTML/CSS/JS, bez budowania.
 

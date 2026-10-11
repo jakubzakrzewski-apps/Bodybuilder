@@ -197,7 +197,7 @@ function viewHome() {
   const week = S.workouts.filter((w) => w.start >= ws);
   const recent = S.workouts.slice(0, 8);
   return `
-    ${bar(`<img class="logo" src="icons/logo.png" alt=""><h1>Trening</h1>`)}
+    ${bar(`<img class="logo" src="icons/logo.png" alt=""><h1>Bodybuilder</h1>`)}
     <div class="hero">
       <div class="label">Objętość w tym tygodniu</div>
       <div class="big">${fmtNum(Math.round(week.reduce((a, w) => a + volume(w), 0)))}<small>kg</small></div>

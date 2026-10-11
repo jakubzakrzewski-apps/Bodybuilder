@@ -1,5 +1,5 @@
 // Najpierw sieć, w razie braku — kopia z cache. Aplikacja działa offline na siłowni.
-const CACHE = 'trening-v1';
+const CACHE = 'bodybuilder-v2';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/logo.png', 'icons/favicon.png', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png',
