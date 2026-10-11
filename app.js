@@ -83,6 +83,7 @@ function freshState() {
   return {
     v: 1,
     exercises: DEFAULT_EXERCISES.map(([name, group, img]) => ({ id: uid(), name, group, img, rest: 120 })),
+    plans: [],      // zapisane treningi (plany): { id, name, exercises: [{ exId, sets, reps }] }
     workouts: [],   // zakończone, od najnowszego
     active: null,   // trening w toku
     rest: null,     // { end, total } — licznik przerwy
@@ -105,13 +106,14 @@ function migrate(s) {
     else s.exercises.push({ id: uid(), name, group, img, rest: 120 });
   }
   for (const ex of s.exercises) if (!GROUPS.includes(ex.group)) ex.group = 'Inne';
+  if (!Array.isArray(s.plans)) s.plans = [];
   return s;
 }
 
 let S = migrate(load());
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
 
-const ui = { tab: 'workout', view: null, q: '', group: '', pickMode: 'browse', nxGroup: 'Inne', onOk: null };
+const ui = { tab: 'workout', view: null, q: '', group: '', pickMode: 'browse', nxGroup: 'Inne', onOk: null, draft: null };
 
 /* ---------- pomocnicze ---------- */
 
@@ -173,11 +175,12 @@ function prevSets(exId) {
   }
   return null;
 }
-// podpowiedź dla serii: wynik z zeszłego razu, a jak go brak — poprzednia seria z dzisiaj
+// podpowiedź dla serii: wynik z zeszłego razu, potem poprzednia seria z dzisiaj, na końcu cel z planu
 function hint(entry, j, prev) {
   if (prev?.[j]) return prev[j];
   const before = entry.sets[j - 1];
-  return before && before.reps ? { kg: before.kg ?? 0, reps: before.reps } : null;
+  if (before && before.reps) return { kg: before.kg ?? 0, reps: before.reps };
+  return entry.target ? { kg: null, reps: entry.target } : null;
 }
 function sessionsOf(exId) {
   const out = [];
@@ -192,10 +195,9 @@ function sessionsOf(exId) {
 
 const bar = (inner) => `<header class="bar">${inner}</header>`;
 
-function viewHome() {
+function viewPlans() {
   const ws = weekStart();
   const week = S.workouts.filter((w) => w.start >= ws);
-  const recent = S.workouts.slice(0, 8);
   return `
     ${bar(`<img class="logo" src="icons/logo.png" alt=""><h1>Bodybuilder</h1>`)}
     <div class="hero">
@@ -207,16 +209,88 @@ function viewHome() {
       <div><div class="label">Serie</div><div class="v">${week.reduce((a, w) => a + countSets(w), 0)}</div></div>
       <div><div class="label">Czas</div><div class="v">${fmtDur(week.reduce((a, w) => a + (w.end - w.start), 0))}</div></div>
     </div>
-    <div class="pad"><button class="btn primary block" data-act="start">Rozpocznij pusty trening</button></div>
-    <h2 class="section">Powtórz trening</h2>
-    ${recent.length
-      ? `<ul class="list">${recent.map((w) => `
-          <li class="row" data-act="repeat" data-id="${w.id}">
-            <div class="main"><div class="t">${esc(w.name)}</div>
-            <div class="s">${DAY.format(w.start)} · ${w.exercises.map((e) => esc(exName(e.exId))).join(', ')}</div></div>
+    <h2 class="section">Moje treningi</h2>
+    ${S.plans.length
+      ? `<ul class="list">${S.plans.map((p) => `
+          <li class="row" data-act="plan-open" data-id="${p.id}">
+            <div class="main"><div class="t">${esc(p.name)}</div>
+            <div class="s">${p.exercises.map((e) => esc(exName(e.exId))).join(', ') || 'Brak ćwiczeń'}</div></div>
+            <div class="r">${p.exercises.length} ćw.</div>
             <span class="chev">›</span>
           </li>`).join('')}</ul>`
-      : `<p class="empty">Tu pojawią się twoje ostatnie treningi. Następnym razem powtórzysz je jednym kliknięciem.</p>`}`;
+      : `<p class="empty">Nie masz jeszcze żadnego treningu. Stwórz pierwszy, np. „Push”, „Pull” albo „Nogi”, i dodaj do niego ćwiczenia.</p>`}
+    <div class="pad stack">
+      <button class="btn primary block" data-act="plan-new">+ Nowy trening</button>
+      <button class="btn block" data-act="start">Szybki trening bez planu</button>
+    </div>`;
+}
+
+// najlepsza seria z ostatniego razu, do podglądu w planie
+function planLast(exId) {
+  const prev = prevSets(exId);
+  if (!prev) return '';
+  const best = prev.reduce((b, x) => (e1rm(x.kg, x.reps) > e1rm(b.kg, b.reps) ? x : b));
+  return ` · ostatnio ${setText(best)}`;
+}
+
+function viewPlan({ id }) {
+  const p = S.plans.find((x) => x.id === id);
+  if (!p) { ui.view = null; return viewPlans(); }
+  return `
+    ${bar(`<button class="back" data-act="back" aria-label="Wstecz">‹</button><h1>${esc(p.name)}</h1><button class="link" data-act="plan-edit" data-id="${p.id}">Edytuj</button>`)}
+    <h2 class="section">${plural(p.exercises.length, 'ćwiczenie', 'ćwiczenia', 'ćwiczeń')}</h2>
+    <ul class="list">${p.exercises.map((e) => {
+      const ex = exById(e.exId);
+      return `
+      <li class="row" data-act="ex-open" data-id="${e.exId}">
+        ${ex ? thumb(ex) : ''}
+        <div class="main"><div class="t">${esc(exName(e.exId))}</div>
+        <div class="s">${plural(e.sets, 'seria', 'serie', 'serii')}${e.reps ? ` × ${e.reps} powt.` : ''}${planLast(e.exId)}</div></div>
+        <span class="chev">›</span>
+      </li>`;
+    }).join('')}</ul>
+    <div class="pad stack">
+      ${S.active
+        ? `<button class="btn block" data-act="go-active">Masz trening w toku — wróć do niego</button>`
+        : `<button class="btn primary block" data-act="plan-start" data-id="${p.id}">Rozpocznij trening</button>`}
+      <button class="btn ghost danger block" data-act="plan-delete" data-id="${p.id}">Usuń trening</button>
+    </div>`;
+}
+
+// kreator: nazwa + lista ćwiczeń z liczbą serii i docelowymi powtórzeniami
+function viewPlanEdit() {
+  const d = ui.draft;
+  return `
+    ${bar(`<button class="back" data-act="plan-cancel" aria-label="Anuluj">‹</button>
+      <h1>${d.id ? 'Edytuj trening' : 'Nowy trening'}</h1>
+      <button class="btn primary sm" data-act="plan-save">Zapisz</button>`)}
+    <label class="field"><span>Nazwa treningu</span>
+      <input data-f="pname" value="${esc(d.name)}" placeholder="np. Push, Nogi, Góra A" maxlength="40" autocomplete="off"></label>
+    <h2 class="section">Ćwiczenia</h2>
+    ${d.exercises.length ? d.exercises.map((e, i) => {
+      const ex = exById(e.exId);
+      return `
+      <div class="pe">
+        <div class="pe-head">
+          ${ex ? thumb(ex) : ''}
+          <div class="main"><div class="t">${esc(exName(e.exId))}</div><div class="s">${esc(ex?.group ?? '')}</div></div>
+          <button class="icon" data-act="pe-move" data-i="${i}" data-d="-1" aria-label="Wyżej"${i === 0 ? ' disabled' : ''}>↑</button>
+          <button class="icon" data-act="pe-move" data-i="${i}" data-d="1" aria-label="Niżej"${i === d.exercises.length - 1 ? ' disabled' : ''}>↓</button>
+          <button class="icon" data-act="pe-remove" data-i="${i}" aria-label="Usuń z treningu">×</button>
+        </div>
+        <div class="pe-ctrl">
+          <span class="lbl">Serie</span>
+          <div class="stepper">
+            <button data-act="pe-sets" data-i="${i}" data-d="-1" aria-label="Mniej serii">−</button>
+            <span>${e.sets}</span>
+            <button data-act="pe-sets" data-i="${i}" data-d="1" aria-label="Więcej serii">+</button>
+          </div>
+          <span class="lbl">Powt.</span>
+          <input data-f="preps" data-i="${i}" inputmode="numeric" value="${e.reps ?? ''}" placeholder="—" aria-label="Docelowe powtórzenia">
+        </div>
+      </div>`;
+    }).join('') : `<p class="empty">Dodaj ćwiczenia, które chcesz robić w tym treningu.</p>`}
+    <div class="pad"><button class="btn block" data-act="plan-add-ex">+ Dodaj ćwiczenie</button></div>`;
 }
 
 function viewActive() {
@@ -242,7 +316,7 @@ function exBlock(entry, i) {
         <button class="ex-name" data-act="ex-open" data-id="${entry.exId}">${esc(ex.name)}</button>
         <button class="icon" data-act="ex-menu" data-ei="${i}" aria-label="Opcje">⋮</button>
       </div>
-      <div class="ex-note">Przerwa ${ex.rest ? clock(ex.rest * 1000) : 'wyłączona'}</div>
+      <div class="ex-note">${entry.target ? `Cel: ${entry.sets.length} × ${entry.target} · ` : ''}Przerwa ${ex.rest ? clock(ex.rest * 1000) : 'wyłączona'}</div>
       <div class="grid head"><span>Seria</span><span>Poprzednio</span><span>kg</span><span>Powt.</span><span></span></div>
       ${entry.sets.map((s, j) => {
         const p = prev?.[j], h = hint(entry, j, prev);
@@ -250,7 +324,7 @@ function exBlock(entry, i) {
         <div class="grid set${s.done ? ' done' : ''}" data-ei="${i}" data-si="${j}">
           <span class="n">${j + 1}</span>
           <span class="prev" data-act="fill-prev">${p ? `${fmtNum(p.kg)} × ${p.reps}` : '—'}</span>
-          <input data-f="kg" inputmode="decimal" autocomplete="off" value="${s.kg == null ? '' : fmtNum(s.kg)}" placeholder="${h ? fmtNum(h.kg) : ''}" aria-label="Ciężar">
+          <input data-f="kg" inputmode="decimal" autocomplete="off" value="${s.kg == null ? '' : fmtNum(s.kg)}" placeholder="${h && h.kg != null ? fmtNum(h.kg) : ''}" aria-label="Ciężar">
           <input data-f="reps" inputmode="numeric" autocomplete="off" value="${s.reps ?? ''}" placeholder="${h ? h.reps : ''}" aria-label="Powtórzenia">
           <button class="check" data-act="toggle" aria-label="Zalicz serię"></button>
         </div>`;
@@ -347,7 +421,7 @@ function viewExercise({ id }) {
   const best1rm = all.reduce((a, s) => Math.max(a, e1rm(s.kg, s.reps)), 0);
   const maxKg = all.reduce((a, s) => Math.max(a, s.kg), 0);
   const series = sessions.map((s) => Math.max(...s.sets.map((x) => e1rm(x.kg, x.reps)))).reverse();
-  const inUse = S.active?.exercises.some((e) => e.exId === id);
+  const inUse = S.active?.exercises.some((e) => e.exId === id) || S.plans.some((p) => p.exercises.some((e) => e.exId === id));
   return `
     ${bar(`<button class="back" data-act="back" aria-label="Wstecz">‹</button><h1>${esc(ex.name)}</h1>`)}
     ${ex.img ? `<div class="photo"><img src="img/${ex.img}.jpg" alt="${esc(ex.name)}"></div>` : ''}
@@ -392,7 +466,7 @@ function videoSection(ex) {
 
 function viewWorkout(v) {
   const w = S.workouts.find((x) => x.id === v.id);
-  if (!w) { ui.view = null; return S.active ? viewActive() : viewHome(); }
+  if (!w) { ui.view = null; return S.active ? viewActive() : viewPlans(); }
   const summary = v.type === 'summary';
   return `
     ${summary
@@ -418,15 +492,16 @@ function viewWorkout(v) {
       </div>`).join('')}
     <div class="pad stack">
       ${!S.active ? `<button class="btn block" data-act="repeat" data-id="${w.id}">Powtórz ten trening</button>` : ''}
+      <button class="btn block" data-act="w-to-plan" data-id="${w.id}">Zapisz jako mój trening</button>
       ${!summary ? `<button class="btn ghost danger block" data-act="w-delete" data-id="${w.id}">Usuń trening</button>` : ''}
     </div>`;
 }
 
-const VIEWS = { exercise: viewExercise, workout: viewWorkout, summary: viewWorkout };
+const VIEWS = { exercise: viewExercise, workout: viewWorkout, summary: viewWorkout, plan: viewPlan, 'plan-edit': viewPlanEdit };
 function render() {
   let html;
   if (ui.view) html = VIEWS[ui.view.type](ui.view);
-  else if (ui.tab === 'workout') html = S.active ? viewActive() : viewHome();
+  else if (ui.tab === 'workout') html = S.active ? viewActive() : viewPlans();
   else if (ui.tab === 'history') html = viewHistory();
   else { ui.pickMode = 'browse'; html = viewExercises(); }
   $('#view').innerHTML = html;
@@ -528,10 +603,10 @@ function confirmSheet(title, text, okLabel, onOk, danger = true) {
   ui.onOk = onOk;
 }
 
-function pickSheet() {
+function pickSheet(mode = 'add') {
   ui.q = '';
   ui.group = '';
-  ui.pickMode = 'add';
+  ui.pickMode = mode;
   openSheet(panel('Dodaj ćwiczenie', `
     <input class="search" data-f="q" type="search" placeholder="Szukaj" autocomplete="off">
     <div class="filters" id="filters">${filterChips()}</div>
@@ -575,13 +650,14 @@ function dataSheet() {
 
 /* ---------- akcje ---------- */
 
-function newEntry(exId, n) {
+function newEntry(exId, n, target = null) {
   n = n || prevSets(exId)?.length || 3;
-  return { exId, sets: Array.from({ length: n }, () => ({ kg: null, reps: null, done: false })) };
+  return { exId, target, sets: Array.from({ length: n }, () => ({ kg: null, reps: null, done: false })) };
 }
 
-function startWorkout(name, exercises = []) {
-  S.active = { id: uid(), name, start: Date.now(), exercises: exercises.map((e) => newEntry(e.exId, e.sets.length)) };
+// entries: [{ exId, n, target }]
+function startWorkout(name, entries = [], planId = null) {
+  S.active = { id: uid(), name, planId, start: Date.now(), exercises: entries.map((e) => newEntry(e.exId, e.n, e.target)) };
   save();
   ui.tab = 'workout';
   ui.view = null;
@@ -629,6 +705,10 @@ function commitFinish() {
   scrollTo(0, 0);
 }
 
+function addToDraft(exId) {
+  ui.draft.exercises.push({ exId, sets: prevSets(exId)?.length || 3, reps: null });
+}
+
 function shake(row) {
   row.classList.remove('shake');
   void row.offsetWidth;
@@ -660,7 +740,80 @@ const actions = {
   start() { startWorkout(defaultName()); },
   repeat(el) {
     const w = S.workouts.find((x) => x.id === el.dataset.id);
-    if (w && !S.active) startWorkout(w.name, w.exercises.filter((e) => exById(e.exId)));
+    if (w && !S.active) startWorkout(w.name, w.exercises.filter((e) => exById(e.exId)).map((e) => ({ exId: e.exId, n: e.sets.length })));
+  },
+
+  'plan-open'(el) { ui.view = { type: 'plan', id: el.dataset.id }; render(); scrollTo(0, 0); },
+  'plan-new'() {
+    ui.draft = { id: null, name: '', exercises: [] };
+    ui.view = { type: 'plan-edit' };
+    render();
+    scrollTo(0, 0);
+  },
+  'plan-edit'(el) {
+    const p = S.plans.find((x) => x.id === el.dataset.id);
+    ui.draft = JSON.parse(JSON.stringify(p));
+    ui.view = { type: 'plan-edit' };
+    render();
+    scrollTo(0, 0);
+  },
+  'plan-cancel'() {
+    ui.view = ui.draft?.id ? { type: 'plan', id: ui.draft.id } : null;
+    ui.draft = null;
+    render();
+    scrollTo(0, 0);
+  },
+  'plan-save'() {
+    const d = ui.draft;
+    d.name = d.name.trim().replace(/\s+/g, ' ');
+    if (!d.name) { const i = $('[data-f=pname]'); shake(i); i.focus(); return; }
+    if (!d.exercises.length) {
+      return confirmSheet('Brak ćwiczeń', 'Dodaj do treningu przynajmniej jedno ćwiczenie.', 'OK', closeSheet, false);
+    }
+    if (d.id) S.plans = S.plans.map((p) => (p.id === d.id ? d : p));
+    else { d.id = uid(); S.plans.push(d); }
+    save();
+    ui.draft = null;
+    ui.view = { type: 'plan', id: d.id };
+    render();
+    scrollTo(0, 0);
+  },
+  'plan-start'(el) {
+    const p = S.plans.find((x) => x.id === el.dataset.id);
+    if (!p || S.active) return;
+    startWorkout(p.name, p.exercises.filter((e) => exById(e.exId)).map((e) => ({ exId: e.exId, n: e.sets, target: e.reps })), p.id);
+  },
+  'plan-delete'(el) {
+    confirmSheet('Usunąć trening?', 'Zniknie z listy twoich treningów. Historia wykonanych treningów zostanie.', 'Usuń trening', () => {
+      S.plans = S.plans.filter((p) => p.id !== el.dataset.id);
+      save(); closeSheet(); ui.view = null; render();
+    });
+  },
+  'plan-add-ex'() { pickSheet('plan'); setTimeout(() => $('#sheet .search')?.focus(), 50); },
+  'pe-sets'(el) {
+    const e = ui.draft.exercises[+el.dataset.i];
+    e.sets = Math.min(10, Math.max(1, e.sets + +el.dataset.d));
+    render();
+  },
+  'pe-move'(el) {
+    const i = +el.dataset.i, j = i + +el.dataset.d, list = ui.draft.exercises;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    render();
+  },
+  'pe-remove'(el) { ui.draft.exercises.splice(+el.dataset.i, 1); render(); },
+  'w-to-plan'(el) {
+    const w = S.workouts.find((x) => x.id === el.dataset.id);
+    const p = {
+      id: uid(), name: w.name,
+      exercises: w.exercises.filter((e) => exById(e.exId)).map((e) => ({ exId: e.exId, sets: e.sets.length, reps: null })),
+    };
+    S.plans.push(p);
+    save();
+    ui.tab = 'workout';
+    ui.view = { type: 'plan', id: p.id };
+    render();
+    scrollTo(0, 0);
   },
   finish() {
     const all = S.active.exercises.flatMap((e) => e.sets);
@@ -710,6 +863,12 @@ const actions = {
   },
   'add-ex'() { pickSheet(); setTimeout(() => $('#sheet .search')?.focus(), 50); },
   pick(el) {
+    if (ui.pickMode === 'plan') {
+      addToDraft(el.dataset.id);
+      closeSheet();
+      render();
+      return;
+    }
     S.active.exercises.push(newEntry(el.dataset.id));
     save();
     closeSheet();
@@ -790,6 +949,7 @@ const actions = {
       S.exercises.push(ex);
     }
     if (ui.pickMode === 'add' && S.active) S.active.exercises.push(newEntry(ex.id));
+    if (ui.pickMode === 'plan' && ui.draft) addToDraft(ex.id);
     save();
     closeSheet();
     ui.q = '';
@@ -822,6 +982,8 @@ document.addEventListener('input', (e) => {
   const f = e.target.dataset.f;
   if (!f) return;
   if (f === 'wname') { S.active.name = e.target.value; save(); return; }
+  if (f === 'pname') { ui.draft.name = e.target.value; return; }
+  if (f === 'preps') { ui.draft.exercises[+e.target.dataset.i].reps = parseInt0(e.target.value); return; }
   if (f === 'q') { ui.q = e.target.value; refreshList(); return; }
   const { s } = setRef(e.target);
   s[f] = f === 'kg' ? parseNum(e.target.value) : parseInt0(e.target.value);
