@@ -381,10 +381,12 @@ function exListHTML(act) {
   let html = items.map((e) => {
     const n = sessionsOf(e.id).length;
     return `
-      <li class="row" data-act="${act}" data-id="${e.id}">
+      <li class="row" data-act="${act === 'pick' ? 'pick-view' : act}" data-id="${e.id}">
         ${thumb(e)}
         <div class="main"><div class="t">${esc(e.name)}</div><div class="s">${esc(e.group)}${n ? ` · ${n} tren.` : ''}</div></div>
-        <span class="chev">›</span>
+        ${act === 'pick'
+          ? `<button class="add-btn" data-act="pick" data-id="${e.id}" aria-label="Dodaj ${esc(e.name)}"></button>`
+          : '<span class="chev">›</span>'}
       </li>`;
   }).join('');
   if (q && !S.exercises.some((e) => norm(e.name) === q)) {
@@ -414,7 +416,8 @@ function chart(values) {
     </div>`;
 }
 
-function viewExercise({ id }) {
+// add: ekran otwarty z listy „Dodaj ćwiczenie” — wstecz wraca do listy, plus w rogu dodaje
+function viewExercise({ id, add }) {
   const ex = exById(id);
   const sessions = sessionsOf(id);
   const all = sessions.flatMap((s) => s.sets);
@@ -423,7 +426,8 @@ function viewExercise({ id }) {
   const series = sessions.map((s) => Math.max(...s.sets.map((x) => e1rm(x.kg, x.reps)))).reverse();
   const inUse = S.active?.exercises.some((e) => e.exId === id) || S.plans.some((p) => p.exercises.some((e) => e.exId === id));
   return `
-    ${bar(`<button class="back" data-act="back" aria-label="Wstecz">‹</button><h1>${esc(ex.name)}</h1>`)}
+    ${bar(`<button class="back" data-act="${add ? 'pick-back' : 'back'}" aria-label="Wstecz">‹</button><h1>${esc(ex.name)}</h1>
+      ${add ? `<button class="add-btn" data-act="pick-add" data-id="${id}" aria-label="Dodaj do treningu"></button>` : ''}`)}
     ${ex.img ? `<div class="photo"><img src="img/${ex.img}.jpg" alt="${esc(ex.name)}"></div>` : ''}
     <div class="hero">
       <div class="label">Szacowany maks. ciężar na 1 powtórzenie</div>
@@ -603,12 +607,12 @@ function confirmSheet(title, text, okLabel, onOk, danger = true) {
   ui.onOk = onOk;
 }
 
-function pickSheet(mode = 'add') {
-  ui.q = '';
-  ui.group = '';
+// keep: powrót z podglądu ćwiczenia — zostaw wyszukiwanie i filtr
+function pickSheet(mode = 'add', keep = false) {
+  if (!keep) { ui.q = ''; ui.group = ''; }
   ui.pickMode = mode;
   openSheet(panel('Dodaj ćwiczenie', `
-    <input class="search" data-f="q" type="search" placeholder="Szukaj" autocomplete="off">
+    <input class="search" data-f="q" type="search" placeholder="Szukaj" value="${esc(ui.q)}" autocomplete="off">
     <div class="filters" id="filters">${filterChips()}</div>
     <ul id="pick-list">${exListHTML('pick')}</ul>`));
 }
@@ -862,6 +866,23 @@ const actions = {
     render();
   },
   'add-ex'() { pickSheet(); setTimeout(() => $('#sheet .search')?.focus(), 50); },
+  // podgląd ćwiczenia z listy „Dodaj ćwiczenie”
+  'pick-view'(el) {
+    ui.pickReturn = ui.view;
+    closeSheet();
+    ui.view = { type: 'exercise', id: el.dataset.id, add: true };
+    render();
+    scrollTo(0, 0);
+  },
+  'pick-back'() {
+    ui.view = ui.pickReturn;
+    render();
+    pickSheet(ui.pickMode, true);
+  },
+  'pick-add'(el) {
+    ui.view = ui.pickReturn;
+    actions.pick(el);
+  },
   pick(el) {
     if (ui.pickMode === 'plan') {
       addToDraft(el.dataset.id);

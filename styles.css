@@ -109,6 +109,13 @@ a.btn { text-decoration: none; color: inherit; }
 .filters .chip { flex: none; }
 #ex-list .row:first-child, #pick-list .row:first-child { border-top: 0; }
 
+/* plus w czarnym kole — jedyny okrągły element, na życzenie */
+.add-btn { position: relative; flex: none; width: 34px; height: 34px; background: var(--fg); border-radius: 50% !important; }
+.add-btn::before, .add-btn::after { content: ""; position: absolute; left: 50%; top: 50%; background: #fff; transform: translate(-50%, -50%); }
+.add-btn::before { width: 14px; height: 2px; }
+.add-btn::after { width: 2px; height: 14px; }
+.add-btn:active { background: var(--red); }
+
 /* plan creator */
 .pe { border-bottom: 1px solid var(--line); padding: 12px 16px; }
 .pe:first-of-type { border-top: 1px solid var(--line); }
