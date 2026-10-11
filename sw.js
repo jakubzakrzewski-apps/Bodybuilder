@@ -1,5 +1,5 @@
 // Najpierw sieć, w razie braku — kopia z cache. Aplikacja działa offline na siłowni.
-const CACHE = 'bodybuilder-v2';
+const CACHE = 'bodybuilder-v3';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/logo.png', 'icons/favicon.png', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -18,7 +18,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'no-cache' }) // zawsze sprawdź, czy na serwerze jest nowsza wersja
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
